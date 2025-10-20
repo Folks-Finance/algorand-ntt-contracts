@@ -67,3 +67,8 @@ jest <PATH_TO_TEST_FILE>
 ```
 
 It is not possible to run the tests in parallel so `--runInBand` option is passed.
+
+If the tests are failing then a possible cause is that they are timing out before they are finished. Try increasing the timeout by either:
+
+- Adding the option `--testTimeout=50000` to the `test` command in the `package.json`.
+- Adding the option to `jest <PATH_TO_TEST_FILE> --testTimeout=50000`.
