@@ -1,11 +1,11 @@
 import { algorandFixture } from "@algorandfoundation/algokit-utils/testing";
 import type { TransactionSignerAccount } from "@algorandfoundation/algokit-utils/types/account";
-import { getApplicationAddress } from "algosdk";
+import { OnApplicationComplete, getApplicationAddress } from "algosdk";
 import type { Account, Address } from "algosdk";
 
 import { NttTokenNewClient, NttTokenNewFactory } from "../../specs/client/NttTokenNew.client.ts";
 import { getAddressRolesBoxKey, getRoleBoxKey } from "../utils/boxes.ts";
-import { getEventBytes, getRandomBytes, getRoleBytes } from "../utils/bytes.ts";
+import { convertNumberToBytes, getEventBytes, getRandomBytes, getRoleBytes } from "../utils/bytes.ts";
 import { SECONDS_IN_DAY } from "../utils/time.ts";
 
 describe("NttTokenNew", () => {
@@ -80,6 +80,36 @@ describe("NttTokenNew", () => {
     const UNIT_NAME = "FOLKS";
     const URL = "https://folks.finance";
     const METADATA_HASH = getRandomBytes(32);
+
+    test.each([
+      { adminLength: 30, totalLength: 8, decimalsLength: 8, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { adminLength: 34, totalLength: 8, decimalsLength: 8, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { adminLength: 32, totalLength: 4, decimalsLength: 8, arg: "arc4.uint64" },
+      { adminLength: 32, totalLength: 16, decimalsLength: 8, arg: "arc4.uint64" },
+      { adminLength: 32, totalLength: 8, decimalsLength: 4, arg: "arc4.uint64" },
+      { adminLength: 32, totalLength: 8, decimalsLength: 16, arg: "arc4.uint64" },
+    ])(
+      `fails to initialise when admin is $adminLength, total is $totalLength and decimals is $decimalsLength bytes`,
+      async ({ adminLength, totalLength, decimalsLength, arg }) => {
+        await expect(
+          localnet.algorand.send.appCall({
+            sender: defaultAdmin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("initialise").getSelector(),
+              getRandomBytes(adminLength),
+              convertNumberToBytes(0, totalLength),
+              convertNumberToBytes(0, decimalsLength),
+              getRandomBytes(8),
+              getRandomBytes(4),
+              getRandomBytes(10),
+              METADATA_HASH,
+            ],
+          }),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
 
     test("fails to initialise when caller is not creator", async () => {
       await expect(

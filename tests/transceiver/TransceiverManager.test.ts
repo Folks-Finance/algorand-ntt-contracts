@@ -1,7 +1,7 @@
 import { algorandFixture } from "@algorandfoundation/algokit-utils/testing";
 import type { TransactionSignerAccount } from "@algorandfoundation/algokit-utils/types/account";
 import { keccak_256 } from "@noble/hashes/sha3";
-import { type Account, type Address, getApplicationAddress } from "algosdk";
+import { type Account, type Address, OnApplicationComplete, getApplicationAddress } from "algosdk";
 
 import { MockMessageHandlerClient, MockMessageHandlerFactory } from "../../specs/client/MockMessageHandler.client.ts";
 import type { MessageReceived } from "../../specs/client/MockTransceiver.client.js";
@@ -185,6 +185,20 @@ describe("TransceiverManager", () => {
   });
 
   describe("add message handler", () => {
+    test.each([
+      { adminLength: 30, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { adminLength: 34, arg: "arc4.static_array<arc4.uint8, 32>" },
+    ])(`fails when admin is $adminLength bytes`, async ({ adminLength, arg }) => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: admin,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [client.appClient.getABIMethod("add_message_handler").getSelector(), getRandomBytes(adminLength)],
+        }),
+      ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+    });
+
     test("fails when caller is not an application", async () => {
       await expect(client.send.addMessageHandler({ sender: user, args: [admin.toString()] })).rejects.toThrow(
         "Caller must be an application",
@@ -342,6 +356,34 @@ describe("TransceiverManager", () => {
       ).toBeTruthy();
     });
 
+    test.each([
+      { messageHandlerLength: 4, arg: "arc4.uint64" },
+      { messageHandlerLength: 16, arg: "arc4.uint64" },
+    ])(`pause fails when message handler is $messageHandlerLength bytes`, async ({ messageHandlerLength, arg }) => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: admin,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [client.appClient.getABIMethod("pause").getSelector(), convertNumberToBytes(0, messageHandlerLength)],
+        }),
+      ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+    });
+
+    test.each([
+      { messageHandlerLength: 6, arg: "arc4.uint64" },
+      { messageHandlerLength: 10, arg: "arc4.uint64" },
+    ])(`unpause fails when message handler is $messageHandlerLength bytes`, async ({ messageHandlerLength, arg }) => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: admin,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [client.appClient.getABIMethod("unpause").getSelector(), convertNumberToBytes(0, messageHandlerLength)],
+        }),
+      ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+    });
+
     test("pause fails when caller is not pauser", async () => {
       await expect(
         client.send.pause({
@@ -447,6 +489,29 @@ describe("TransceiverManager", () => {
       // check they are unique
       expect(new Set(transceiverAppIds).size).toEqual(Number(MAX_TRANSCEIVERS) + 1);
     });
+
+    test.each([
+      { messageHandlerLength: 4, transceiverLength: 8, arg: "arc4.uint64" },
+      { messageHandlerLength: 16, transceiverLength: 8, arg: "arc4.uint64" },
+      { messageHandlerLength: 8, transceiverLength: 4, arg: "arc4.uint64" },
+      { messageHandlerLength: 8, transceiverLength: 16, arg: "arc4.uint64" },
+    ])(
+      `unpause fails when message handler is $messageHandlerLength and transceiver is $transceiverLength bytes`,
+      async ({ messageHandlerLength, transceiverLength, arg }) => {
+        await expect(
+          localnet.algorand.send.appCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("add_transceiver").getSelector(),
+              convertNumberToBytes(0, messageHandlerLength),
+              convertNumberToBytes(0, transceiverLength),
+            ],
+          }),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
 
     test("fails when message handler is unknown", async () => {
       const transceiverAppId = transceiverAppIds[0];
@@ -587,6 +652,29 @@ describe("TransceiverManager", () => {
   });
 
   describe("remove transceiver", () => {
+    test.each([
+      { messageHandlerLength: 4, transceiverLength: 8, arg: "arc4.uint64" },
+      { messageHandlerLength: 16, transceiverLength: 8, arg: "arc4.uint64" },
+      { messageHandlerLength: 8, transceiverLength: 4, arg: "arc4.uint64" },
+      { messageHandlerLength: 8, transceiverLength: 16, arg: "arc4.uint64" },
+    ])(
+      `unpause fails when message handler is $messageHandlerLength and transceiver is $transceiverLength bytes`,
+      async ({ messageHandlerLength, transceiverLength, arg }) => {
+        await expect(
+          localnet.algorand.send.appCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("remove_transceiver").getSelector(),
+              convertNumberToBytes(0, messageHandlerLength),
+              convertNumberToBytes(0, transceiverLength),
+            ],
+          }),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
+
     test("fails when message handler is unknown", async () => {
       const transceiverAppId = transceiverAppIds[0];
       expect(await client.isMessageHandlerKnown({ args: [transceiverAppId] })).toBeFalsy();
@@ -845,6 +933,119 @@ describe("TransceiverManager", () => {
       });
     });
 
+    test("fails when fee payment isn't payment", async () => {
+      const {
+        transactions: [feePaymentTxn],
+      } = await opUpClient.createTransaction.ensureBudget({
+        sender: user,
+        args: [0],
+      });
+      await expect(
+        localnet.algorand
+          .newGroup()
+          .addTransaction(feePaymentTxn)
+          .addAppCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("send_message_to_transceivers").getSelector(),
+              getRandomBytes(132),
+              convertNumberToBytes(0, 2),
+            ],
+          })
+          .send(),
+      ).rejects.toThrow("transaction type is pay");
+    });
+
+    test("fails when message length is less than 132 bytes", async () => {
+      const feePaymentTxn = await localnet.algorand.createTransaction.payment({
+        sender: user,
+        receiver: getApplicationAddress(appId),
+        amount: (0).microAlgo(),
+      });
+      await expect(
+        localnet.algorand
+          .newGroup()
+          .addTransaction(feePaymentTxn)
+          .addAppCall({
+            sender: user,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("send_message_to_transceivers").getSelector(),
+              getRandomBytes(131),
+              convertNumberToBytes(0, 2),
+            ],
+            extraFee: (2000).microAlgos(),
+          })
+          .send(),
+      ).rejects.toThrow(`invalid tuple encoding`);
+    });
+
+    test("fails when message pointer is not to payload", async () => {
+      const feePaymentTxn = await localnet.algorand.createTransaction.payment({
+        sender: user,
+        receiver: getApplicationAddress(appId),
+        amount: (0).microAlgo(),
+      });
+      await expect(
+        localnet.algorand
+          .newGroup()
+          .addTransaction(feePaymentTxn)
+          .addAppCall({
+            sender: user,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("send_message_to_transceivers").getSelector(),
+              Uint8Array.from([...getRandomBytes(130), ...convertNumberToBytes(129, 2)]),
+              convertNumberToBytes(0, 2),
+            ],
+            extraFee: (2000).microAlgos(),
+          })
+          .send(),
+      ).rejects.toThrow(`invalid tail pointer at index 5`);
+    });
+
+    test.each([
+      { messagePayloadLengthDelta: -1, arg: "ntt_contracts.types.MessageToSend" },
+      { messagePayloadLengthDelta: 1, arg: "ntt_contracts.types.MessageToSend" },
+    ])(
+      "fails when message payload length delta is $messagePayloadLengthDelta bytes",
+      async ({ messagePayloadLengthDelta, arg }) => {
+        const feePaymentTxn = await localnet.algorand.createTransaction.payment({
+          sender: user,
+          receiver: getApplicationAddress(appId),
+          amount: (0).microAlgo(),
+        });
+        const payload = getRandomBytes(50);
+        const transceiverInstruction = getRandomBytes(10);
+        await expect(
+          localnet.algorand
+            .newGroup()
+            .addTransaction(feePaymentTxn)
+            .addAppCall({
+              sender: user,
+              appId,
+              onComplete: OnApplicationComplete.NoOpOC,
+              args: [
+                client.appClient.getABIMethod("send_message_to_transceivers").getSelector(),
+                Uint8Array.from([
+                  ...getRandomBytes(130),
+                  ...convertNumberToBytes(132, 2),
+                  ...convertNumberToBytes(payload.length + messagePayloadLengthDelta, 2),
+                  ...payload,
+                ]),
+                convertNumberToBytes(0, 2),
+              ],
+              extraFee: (2000).microAlgos(),
+            })
+            .send(),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
+
     test("fails when caller is not an application", async () => {
       const feePaymentTxn = await localnet.algorand.createTransaction.payment({
         sender: user,
@@ -928,7 +1129,7 @@ describe("TransceiverManager", () => {
 
     test("fails when 0 transceivers configured", async () => {
       const message = getRandomMessageToSend({
-        sourceAddress: getApplicationAddress(messageHandlerAppIdWithNoTransceivers).publicKey,
+        sourceAddress: convertNumberToBytes(messageHandlerAppIdWithNoTransceivers, 32),
       });
       await expect(
         messageHandlerFactory
@@ -945,7 +1146,7 @@ describe("TransceiverManager", () => {
 
     test("fails when unknown transceiver in instructions is passed", async () => {
       const added = await client.getHandlerTransceivers({ args: [messageHandlerAppId] });
-      const message = getRandomMessageToSend({ sourceAddress: getApplicationAddress(messageHandlerAppId).publicKey });
+      const message = getRandomMessageToSend({ sourceAddress: convertNumberToBytes(messageHandlerAppId, 32) });
       const transceiverInstructions: TransceiverInstruction[] = [[messageHandlerAppId, getRandomBytes(10)]];
 
       // send message
@@ -962,7 +1163,7 @@ describe("TransceiverManager", () => {
 
     test("fails when incorrect order of transceivers in instructions is passed", async () => {
       const added = await client.getHandlerTransceivers({ args: [messageHandlerAppId] });
-      const message = getRandomMessageToSend({ sourceAddress: getApplicationAddress(messageHandlerAppId).publicKey });
+      const message = getRandomMessageToSend({ sourceAddress: convertNumberToBytes(messageHandlerAppId, 32) });
       const transceiverInstructions: TransceiverInstruction[] = [
         [added[1], getRandomBytes(10)],
         [added[0], getRandomBytes(10)],
@@ -982,7 +1183,7 @@ describe("TransceiverManager", () => {
 
     test("fails when fee payment receiver isn't contract", async () => {
       const added = await client.getHandlerTransceivers({ args: [messageHandlerAppId] });
-      const message = getRandomMessageToSend({ sourceAddress: getApplicationAddress(messageHandlerAppId).publicKey });
+      const message = getRandomMessageToSend({ sourceAddress: convertNumberToBytes(messageHandlerAppId, 32) });
 
       // send message
       const fundingTxn = await localnet.algorand.createTransaction.payment({
@@ -1007,7 +1208,7 @@ describe("TransceiverManager", () => {
 
     test("fails when fee payment is too low", async () => {
       const added = await client.getHandlerTransceivers({ args: [messageHandlerAppId] });
-      const message = getRandomMessageToSend({ sourceAddress: getApplicationAddress(messageHandlerAppId).publicKey });
+      const message = getRandomMessageToSend({ sourceAddress: convertNumberToBytes(messageHandlerAppId, 32) });
 
       // send message
       await expect(
@@ -1018,16 +1219,12 @@ describe("TransceiverManager", () => {
           boxReferences: [getHandlerTransceiversBoxKey(messageHandlerAppId)],
           extraFee: (2000 + NUM_TRANSCEIVERS_ADDED * 3000).microAlgos(),
         }),
-      ).rejects.toThrow(
-        // TODO https://github.com/algorandfoundation/algokit-utils-ts/issues/445
-        // "Incorrect fee payment amount"
-        "transaction rejected by ApprovalProgram",
-      );
+      ).rejects.toThrow("Incorrect fee payment amount");
     });
 
     test("fails when fee payment is too high", async () => {
       const added = await client.getHandlerTransceivers({ args: [messageHandlerAppId] });
-      const message = getRandomMessageToSend({ sourceAddress: getApplicationAddress(messageHandlerAppId).publicKey });
+      const message = getRandomMessageToSend({ sourceAddress: convertNumberToBytes(messageHandlerAppId, 32) });
 
       // send message
       await expect(
@@ -1038,16 +1235,12 @@ describe("TransceiverManager", () => {
           boxReferences: [getHandlerTransceiversBoxKey(messageHandlerAppId)],
           extraFee: (2000 + NUM_TRANSCEIVERS_ADDED * 3000).microAlgos(),
         }),
-      ).rejects.toThrow(
-        // TODO https://github.com/algorandfoundation/algokit-utils-ts/issues/445
-        // "Incorrect fee payment amount"
-        "transaction rejected by ApprovalProgram",
-      );
+      ).rejects.toThrow("Incorrect fee payment amount");
     });
 
     test("succeeds", async () => {
       const added = await client.getHandlerTransceivers({ args: [messageHandlerAppId] });
-      const message = getRandomMessageToSend({ sourceAddress: getApplicationAddress(messageHandlerAppId).publicKey });
+      const message = getRandomMessageToSend({ sourceAddress: convertNumberToBytes(messageHandlerAppId, 32) });
       const transceiverInstructions: TransceiverInstruction[] = [
         [added[0], getRandomBytes(10)],
         [added[1], getRandomBytes(30)],
@@ -1115,6 +1308,60 @@ describe("TransceiverManager", () => {
       );
       messageDigest = await client.calculateMessageDigest({ args: [messageReceived] });
     });
+
+    test("fails when message length is less than 132 bytes", async () => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: user,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [client.appClient.getABIMethod("attestation_received").getSelector(), getRandomBytes(131)],
+          extraFee: (2000).microAlgos(),
+        }),
+      ).rejects.toThrow(`invalid tuple encoding`);
+    });
+
+    test("fails when message pointer is not to payload", async () => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: user,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [
+            client.appClient.getABIMethod("attestation_received").getSelector(),
+            Uint8Array.from([...getRandomBytes(130), ...convertNumberToBytes(0, 2)]),
+          ],
+          extraFee: (2000).microAlgos(),
+        }),
+      ).rejects.toThrow(`invalid tail pointer at index 5`);
+    });
+
+    test.each([
+      { messagePayloadLengthDelta: -1, arg: "ntt_contracts.types.MessageReceived" },
+      { messagePayloadLengthDelta: 1, arg: "ntt_contracts.types.MessageReceived" },
+    ])(
+      "fails when message payload length delta is $messagePayloadLengthDelta bytes",
+      async ({ messagePayloadLengthDelta, arg }) => {
+        const payload = getRandomBytes(50);
+        await expect(
+          localnet.algorand.send.appCall({
+            sender: user,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("attestation_received").getSelector(),
+              Uint8Array.from([
+                ...getRandomBytes(130),
+                ...convertNumberToBytes(132, 2),
+                ...convertNumberToBytes(payload.length + messagePayloadLengthDelta, 2),
+                ...payload,
+              ]),
+            ],
+            extraFee: (2000).microAlgos(),
+          }),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
 
     test("fails when caller is not an application", async () => {
       await expect(

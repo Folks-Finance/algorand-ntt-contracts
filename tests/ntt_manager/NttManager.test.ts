@@ -1,6 +1,6 @@
 import { algorandFixture } from "@algorandfoundation/algokit-utils/testing";
 import type { TransactionSignerAccount } from "@algorandfoundation/algokit-utils/types/account";
-import { type Account, type Address, getApplicationAddress } from "algosdk";
+import { type Account, type Address, OnApplicationComplete, getApplicationAddress } from "algosdk";
 
 import { MockNttTokenClient, MockNttTokenFactory } from "../../specs/client/MockNttToken.client.ts";
 import {
@@ -19,6 +19,7 @@ import {
   getRoleBoxKey,
 } from "../utils/boxes.ts";
 import {
+  convertNumberToBytes,
   getEventBytes,
   getInboundBucketIdBytes,
   getOutboundBucketIdBytes,
@@ -236,7 +237,7 @@ describe("NttManager", () => {
     expect(await client.state.global.assetId()).toEqual(assetId);
     expect(await client.state.global.nttToken()).toEqual(nttTokenAppId);
     expect(await client.state.global.messageSequence()).toEqual(0n);
-    expect(await client.state.global.chainId()).toEqual(SOURCE_CHAIN_ID);
+    expect(await client.state.global.chainId()).toEqual(Number(SOURCE_CHAIN_ID));
 
     expect(Uint8Array.from(await client.defaultAdminRole())).toEqual(DEFAULT_ADMIN_ROLE);
     expect(Uint8Array.from(await client.getRoleAdmin({ args: [DEFAULT_ADMIN_ROLE] }))).toEqual(DEFAULT_ADMIN_ROLE);
@@ -400,6 +401,29 @@ describe("NttManager", () => {
         }),
       ).rejects.toThrow("Uninitialised contract");
     });
+
+    test.each([
+      { adminLength: 30, transceiverManagerLength: 8, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { adminLength: 34, transceiverManagerLength: 8, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { adminLength: 32, transceiverManagerLength: 4, arg: "arc4.uint64" },
+      { adminLength: 32, transceiverManagerLength: 16, arg: "arc4.uint64" },
+    ])(
+      `fails to initialise when admin is $adminLength and transceiver manager is $transceiverManagerLength bytes`,
+      async ({ adminLength, transceiverManagerLength, arg }) => {
+        await expect(
+          localnet.algorand.send.appCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("initialise").getSelector(),
+              getRandomBytes(adminLength),
+              convertNumberToBytes(0, transceiverManagerLength),
+            ],
+          }),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
 
     test("succeeds to initialise and sets correct state", async () => {
       const APP_MIN_BALANCE = (265_700).microAlgos();
@@ -650,6 +674,29 @@ describe("NttManager", () => {
   });
 
   describe("set transceiver manager", () => {
+    test.each([
+      { adminLength: 30, transceiverManagerLength: 8, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { adminLength: 34, transceiverManagerLength: 8, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { adminLength: 32, transceiverManagerLength: 4, arg: "arc4.uint64" },
+      { adminLength: 32, transceiverManagerLength: 16, arg: "arc4.uint64" },
+    ])(
+      `fails when admin is $adminLength and transceiver manager is $transceiverManagerLength bytes`,
+      async ({ adminLength, transceiverManagerLength, arg }) => {
+        await expect(
+          localnet.algorand.send.appCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("set_transceiver_manager").getSelector(),
+              getRandomBytes(adminLength),
+              convertNumberToBytes(0, transceiverManagerLength),
+            ],
+          }),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
+
     test("fails when caller is not ntt manager admin", async () => {
       await expect(
         client.send.setTransceiverManager({
@@ -705,6 +752,23 @@ describe("NttManager", () => {
   });
 
   describe("set threshold", () => {
+    test.each([
+      { thresholdLength: 4, arg: "arc4.uint64" },
+      { thresholdLength: 16, arg: "arc4.uint64" },
+    ])(`fails when threshold is $thresholdLength bytes`, async ({ thresholdLength, arg }) => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: admin,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [
+            client.appClient.getABIMethod("set_threshold").getSelector(),
+            convertNumberToBytes(0, thresholdLength),
+          ],
+        }),
+      ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+    });
+
     test("fails when caller is not ntt manager admin", async () => {
       await expect(
         client.send.setThreshold({
@@ -775,6 +839,32 @@ describe("NttManager", () => {
       });
       expect(await client.getRateDuration({ args: [bucketId] })).toEqual(INBOUND_DURATION);
     });
+
+    test.each([
+      { chainIdLength: 1, contractLength: 32, decimalsLength: 1, arg: "arc4.uint16" },
+      { chainIdLength: 4, contractLength: 32, decimalsLength: 1, arg: "arc4.uint16" },
+      { chainIdLength: 2, contractLength: 30, decimalsLength: 1, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { chainIdLength: 2, contractLength: 34, decimalsLength: 1, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { chainIdLength: 2, contractLength: 32, decimalsLength: 0, arg: "arc4.uint8" },
+      { chainIdLength: 2, contractLength: 32, decimalsLength: 2, arg: "arc4.uint8" },
+    ])(
+      `fails when chain id is $chainIdLength, contract is $contractLength and decimals is $decimalsLength bytes`,
+      async ({ chainIdLength, contractLength, decimalsLength, arg }) => {
+        await expect(
+          localnet.algorand.send.appCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("set_ntt_manager_peer").getSelector(),
+              convertNumberToBytes(0, chainIdLength),
+              convertNumberToBytes(0, contractLength),
+              convertNumberToBytes(0, decimalsLength),
+            ],
+          }),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
 
     test("fails when caller is not ntt manager admin", async () => {
       await expect(
@@ -899,6 +989,112 @@ describe("NttManager", () => {
   });
 
   describe("transfer", () => {
+    test("fails when fee payment isn't payment", async () => {
+      const feePaymentTxn = await localnet.algorand.createTransaction.assetTransfer({
+        sender: user,
+        receiver: getApplicationAddress(nttTokenAppId),
+        assetId,
+        amount: 0n,
+      });
+      const sendTokenTxn = await localnet.algorand.createTransaction.assetTransfer({
+        sender: user,
+        receiver: getApplicationAddress(nttTokenAppId),
+        assetId,
+        amount: 1n,
+      });
+      await expect(
+        localnet.algorand
+          .newGroup()
+          .addTransaction(feePaymentTxn)
+          .addTransaction(sendTokenTxn)
+          .addAppCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("transfer").getSelector(),
+              convertNumberToBytes(0, 8),
+              convertNumberToBytes(0, 2),
+              convertNumberToBytes(0, 32),
+            ],
+          })
+          .send(),
+      ).rejects.toThrow("transaction type is pay");
+    });
+
+    test("fails when send token isn't asset transfer", async () => {
+      const feePaymentTxn = await localnet.algorand.createTransaction.payment({
+        sender: user,
+        receiver: getApplicationAddress(nttTokenAppId),
+        amount: (0).microAlgo(),
+      });
+      const sendTokenTxn = await localnet.algorand.createTransaction.payment({
+        sender: user,
+        receiver: getApplicationAddress(nttTokenAppId),
+        amount: (1).microAlgo(),
+      });
+      await expect(
+        localnet.algorand
+          .newGroup()
+          .addTransaction(feePaymentTxn)
+          .addTransaction(sendTokenTxn)
+          .addAppCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("transfer").getSelector(),
+              convertNumberToBytes(0, 8),
+              convertNumberToBytes(0, 2),
+              convertNumberToBytes(0, 32),
+            ],
+          })
+          .send(),
+      ).rejects.toThrow("transaction type is axfer");
+    });
+
+    test.each([
+      { amountLength: 4, recipientChainLength: 2, recipientLength: 32, arg: "arc4.uint64" },
+      { amountLength: 16, recipientChainLength: 2, recipientLength: 32, arg: "arc4.uint64" },
+      { amountLength: 8, recipientChainLength: 1, recipientLength: 32, arg: "arc4.uint16" },
+      { amountLength: 8, recipientChainLength: 8, recipientLength: 32, arg: "arc4.uint16" },
+      { amountLength: 8, recipientChainLength: 2, recipientLength: 30, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { amountLength: 8, recipientChainLength: 2, recipientLength: 34, arg: "arc4.static_array<arc4.uint8, 32>" },
+    ])(
+      `fails when amount is $amountLength, recipient chain is $recipientChainLength and recipient is $recipientLength bytes`,
+      async ({ amountLength, recipientChainLength, recipientLength, arg }) => {
+        const feePaymentTxn = await localnet.algorand.createTransaction.payment({
+          sender: user,
+          receiver: getApplicationAddress(nttTokenAppId),
+          amount: (0).microAlgo(),
+        });
+        const sendTokenTxn = await localnet.algorand.createTransaction.assetTransfer({
+          sender: user,
+          receiver: getApplicationAddress(nttTokenAppId),
+          assetId,
+          amount: 1n,
+        });
+        await expect(
+          localnet.algorand
+            .newGroup()
+            .addTransaction(feePaymentTxn)
+            .addTransaction(sendTokenTxn)
+            .addAppCall({
+              sender: admin,
+              appId,
+              onComplete: OnApplicationComplete.NoOpOC,
+              args: [
+                client.appClient.getABIMethod("transfer").getSelector(),
+                convertNumberToBytes(0, amountLength),
+                convertNumberToBytes(0, recipientChainLength),
+                convertNumberToBytes(0, recipientLength),
+              ],
+            })
+            .send(),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
+
     test("fails when fee payment receiver isn't contract", async () => {
       const feePaymentTxn = await localnet.algorand.createTransaction.payment({
         sender: user,
@@ -1356,6 +1552,132 @@ describe("NttManager", () => {
   });
 
   describe("transfer full", () => {
+    test("fails when fee payment isn't payment", async () => {
+      const feePaymentTxn = await localnet.algorand.createTransaction.assetTransfer({
+        sender: user,
+        receiver: getApplicationAddress(nttTokenAppId),
+        assetId,
+        amount: 0n,
+      });
+      const sendTokenTxn = await localnet.algorand.createTransaction.assetTransfer({
+        sender: user,
+        receiver: getApplicationAddress(nttTokenAppId),
+        assetId,
+        amount: 1n,
+      });
+      await expect(
+        localnet.algorand
+          .newGroup()
+          .addTransaction(feePaymentTxn)
+          .addTransaction(sendTokenTxn)
+          .addAppCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("transfer_full").getSelector(),
+              convertNumberToBytes(0, 8),
+              convertNumberToBytes(0, 2),
+              convertNumberToBytes(0, 32),
+              convertNumberToBytes(0, 1),
+              convertNumberToBytes(0, 0),
+            ],
+          })
+          .send(),
+      ).rejects.toThrow("transaction type is pay");
+    });
+
+    test("fails when send token isn't asset transfer", async () => {
+      const feePaymentTxn = await localnet.algorand.createTransaction.payment({
+        sender: user,
+        receiver: getApplicationAddress(nttTokenAppId),
+        amount: (0).microAlgo(),
+      });
+      const sendTokenTxn = await localnet.algorand.createTransaction.payment({
+        sender: user,
+        receiver: getApplicationAddress(nttTokenAppId),
+        amount: (1).microAlgo(),
+      });
+      await expect(
+        localnet.algorand
+          .newGroup()
+          .addTransaction(feePaymentTxn)
+          .addTransaction(sendTokenTxn)
+          .addAppCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("transfer_full").getSelector(),
+              convertNumberToBytes(0, 8),
+              convertNumberToBytes(0, 2),
+              convertNumberToBytes(0, 32),
+              convertNumberToBytes(0, 1),
+              convertNumberToBytes(0, 0),
+            ],
+          })
+          .send(),
+      ).rejects.toThrow("transaction type is axfer");
+    });
+
+    test.each([
+      { amountLength: 4, recipientChainLength: 2, recipientLength: 32, shouldQueueLength: 1, arg: "arc4.uint64" },
+      { amountLength: 16, recipientChainLength: 2, recipientLength: 32, shouldQueueLength: 1, arg: "arc4.uint64" },
+      { amountLength: 8, recipientChainLength: 1, recipientLength: 32, shouldQueueLength: 1, arg: "arc4.uint16" },
+      { amountLength: 8, recipientChainLength: 8, recipientLength: 32, shouldQueueLength: 1, arg: "arc4.uint16" },
+      {
+        amountLength: 8,
+        recipientChainLength: 2,
+        recipientLength: 30,
+        shouldQueueLength: 1,
+        arg: "arc4.static_array<arc4.uint8, 32>",
+      },
+      {
+        amountLength: 8,
+        recipientChainLength: 2,
+        recipientLength: 34,
+        shouldQueueLength: 1,
+        arg: "arc4.static_array<arc4.uint8, 32>",
+      },
+      { amountLength: 8, recipientChainLength: 2, recipientLength: 32, shouldQueueLength: 0, arg: "arc4.bool" },
+      { amountLength: 8, recipientChainLength: 2, recipientLength: 32, shouldQueueLength: 2, arg: "arc4.bool" },
+    ])(
+      `fails when amount is $amountLength, recipient chain is $recipientChainLength, recipient is $recipientLength and should queue is $shouldQueueLength bytes`,
+      async ({ amountLength, recipientChainLength, recipientLength, shouldQueueLength, arg }) => {
+        const feePaymentTxn = await localnet.algorand.createTransaction.payment({
+          sender: user,
+          receiver: getApplicationAddress(nttTokenAppId),
+          amount: (0).microAlgo(),
+        });
+        const sendTokenTxn = await localnet.algorand.createTransaction.assetTransfer({
+          sender: user,
+          receiver: getApplicationAddress(nttTokenAppId),
+          assetId,
+          amount: 1n,
+        });
+        await expect(
+          localnet.algorand
+            .newGroup()
+            .addTransaction(feePaymentTxn)
+            .addTransaction(sendTokenTxn)
+            .addAppCall({
+              sender: admin,
+              appId,
+              onComplete: OnApplicationComplete.NoOpOC,
+              args: [
+                client.appClient.getABIMethod("transfer_full").getSelector(),
+                convertNumberToBytes(0, amountLength),
+                convertNumberToBytes(0, recipientChainLength),
+                convertNumberToBytes(0, recipientLength),
+                convertNumberToBytes(0, shouldQueueLength),
+                convertNumberToBytes(0, 2),
+              ],
+            })
+            .send(),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
+
     test("fails when fee payment receiver isn't contract", async () => {
       const feePaymentTxn = await localnet.algorand.createTransaction.payment({
         sender: user,
@@ -2007,6 +2329,56 @@ describe("NttManager", () => {
       await client.getOutboundQueuedTransfer({ args: [queuedTransferMessageId] });
     });
 
+    test("fails when fee payment isn't payment", async () => {
+      const feePaymentTxn = await localnet.algorand.createTransaction.assetTransfer({
+        sender: user,
+        receiver: getApplicationAddress(nttTokenAppId),
+        assetId,
+        amount: 0n,
+      });
+      await expect(
+        localnet.algorand
+          .newGroup()
+          .addTransaction(feePaymentTxn)
+          .addAppCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("complete_outbound_queued_transfer").getSelector(),
+              convertNumberToBytes(0, 32),
+            ],
+          })
+          .send(),
+      ).rejects.toThrow("transaction type is pay");
+    });
+
+    test.each([
+      { messageIdLength: 16, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { messageIdLength: 34, arg: "arc4.static_array<arc4.uint8, 32>" },
+    ])(`fails when message id is $messageIdLength bytes`, async ({ messageIdLength, arg }) => {
+      const feePaymentTxn = await localnet.algorand.createTransaction.payment({
+        sender: user,
+        receiver: getApplicationAddress(appId),
+        amount: (0).microAlgo(),
+      });
+      await expect(
+        localnet.algorand
+          .newGroup()
+          .addTransaction(feePaymentTxn)
+          .addAppCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("complete_outbound_queued_transfer").getSelector(),
+              convertNumberToBytes(0, messageIdLength),
+            ],
+          })
+          .send(),
+      ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+    });
+
     test("fails when the transfer is unknown", async () => {
       const feePaymentTxn = await localnet.algorand.createTransaction.payment({
         sender: user,
@@ -2289,6 +2661,23 @@ describe("NttManager", () => {
       ).rejects.toThrow("Unknown outbound queued transfer");
     });
 
+    test.each([
+      { messageIdLength: 16, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { messageIdLength: 34, arg: "arc4.static_array<arc4.uint8, 32>" },
+    ])(`fails when message id is $messageIdLength bytes`, async ({ messageIdLength, arg }) => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: admin,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [
+            client.appClient.getABIMethod("cancel_outbound_queued_transfer").getSelector(),
+            convertNumberToBytes(0, messageIdLength),
+          ],
+        }),
+      ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+    });
+
     test("fails when caller didn't initiate the transfer", async () => {
       await expect(
         client.send.cancelOutboundQueuedTransfer({
@@ -2343,7 +2732,7 @@ describe("NttManager", () => {
         getRandomMessageToSend({
           sourceAddress: PEER_CONTRACT,
           destinationChainId: Number(SOURCE_CHAIN_ID),
-          handlerAddress: getApplicationAddress(appId).publicKey,
+          handlerAddress: convertNumberToBytes(appId, 32),
           payload,
         }),
       );
@@ -2371,7 +2760,7 @@ describe("NttManager", () => {
         getRandomMessageToSend({
           sourceAddress: PEER_CONTRACT,
           destinationChainId: Number(SOURCE_CHAIN_ID),
-          handlerAddress: getApplicationAddress(appId).publicKey,
+          handlerAddress: convertNumberToBytes(appId, 32),
           payload: getNttPayload(PEER_DECIMALS, amount, getRandomBytes(32), user.publicKey, SOURCE_CHAIN_ID),
         }),
       );
@@ -2399,7 +2788,7 @@ describe("NttManager", () => {
         getRandomMessageToSend({
           sourceAddress: getRandomBytes(32),
           destinationChainId: Number(SOURCE_CHAIN_ID),
-          handlerAddress: getApplicationAddress(appId).publicKey,
+          handlerAddress: convertNumberToBytes(appId, 32),
           payload: getNttPayload(PEER_DECIMALS, amount, getRandomBytes(32), user.publicKey, SOURCE_CHAIN_ID),
         }),
       );
@@ -2427,7 +2816,7 @@ describe("NttManager", () => {
         getRandomMessageToSend({
           sourceAddress: PEER_CONTRACT,
           destinationChainId: Number(SOURCE_CHAIN_ID),
-          handlerAddress: getApplicationAddress(appId).publicKey,
+          handlerAddress: convertNumberToBytes(appId, 32),
           payload: getNttPayload(PEER_DECIMALS, amount, getRandomBytes(32), user.publicKey, PEER_CHAIN_ID),
         }),
       );
@@ -2462,7 +2851,7 @@ describe("NttManager", () => {
         getRandomMessageToSend({
           sourceAddress: PEER_CONTRACT,
           destinationChainId: Number(SOURCE_CHAIN_ID),
-          handlerAddress: getApplicationAddress(appId).publicKey,
+          handlerAddress: convertNumberToBytes(appId, 32),
           payload: getNttPayload(PEER_DECIMALS, amount, getRandomBytes(32), user.publicKey, SOURCE_CHAIN_ID),
         }),
       );
@@ -2504,7 +2893,7 @@ describe("NttManager", () => {
         getRandomMessageToSend({
           sourceAddress: PEER_CONTRACT,
           destinationChainId: Number(SOURCE_CHAIN_ID),
-          handlerAddress: getApplicationAddress(appId).publicKey,
+          handlerAddress: convertNumberToBytes(appId, 32),
           payload: getNttPayload(PEER_DECIMALS, amount, getRandomBytes(32), user.publicKey, SOURCE_CHAIN_ID),
         }),
       );
@@ -2567,7 +2956,7 @@ describe("NttManager", () => {
         getRandomMessageToSend({
           sourceAddress: PEER_CONTRACT,
           destinationChainId: Number(SOURCE_CHAIN_ID),
-          handlerAddress: getApplicationAddress(appId).publicKey,
+          handlerAddress: convertNumberToBytes(appId, 32),
           payload: getNttPayload(PEER_DECIMALS, amount, getRandomBytes(32), user.publicKey, SOURCE_CHAIN_ID),
         }),
       );
@@ -2617,7 +3006,7 @@ describe("NttManager", () => {
         getRandomMessageToSend({
           sourceAddress: PEER_CONTRACT,
           destinationChainId: Number(SOURCE_CHAIN_ID),
-          handlerAddress: getApplicationAddress(appId).publicKey,
+          handlerAddress: convertNumberToBytes(appId, 32),
           payload: getNttPayload(PEER_DECIMALS, amount, getRandomBytes(32), user.publicKey, SOURCE_CHAIN_ID),
         }),
       );
@@ -2649,6 +3038,23 @@ describe("NttManager", () => {
 
       // ensure queued
       await client.getInboundQueuedTransfer({ args: [queuedTransferMessageDigest] });
+    });
+
+    test.each([
+      { messageDigestLength: 16, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { messageDigestLength: 34, arg: "arc4.static_array<arc4.uint8, 32>" },
+    ])(`fails when message id is $messageDigestLength bytes`, async ({ messageDigestLength, arg }) => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: admin,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [
+            client.appClient.getABIMethod("complete_inbound_queued_transfer").getSelector(),
+            convertNumberToBytes(0, messageDigestLength),
+          ],
+        }),
+      ).rejects.toThrow(`invalid number of bytes for ${arg}`);
     });
 
     test("fails when the transfer is unknown", async () => {

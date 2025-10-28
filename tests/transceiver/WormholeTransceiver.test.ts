@@ -22,7 +22,12 @@ import {
   getRoleBytes,
 } from "../utils/bytes.ts";
 import { deployWormholeCore, getWormholeEmitterLSig } from "../utils/contract.ts";
-import { encodeMessageToSend, getRandomMessageToSend, getWormholeVAA } from "../utils/message.ts";
+import {
+  WORMHOLE_TRANSCEIVER_PAYLOAD_PREFIX,
+  encodeMessageToSend,
+  getRandomMessageToSend,
+  getWormholeVAA,
+} from "../utils/message.ts";
 import { SECONDS_IN_DAY } from "../utils/time.ts";
 import { MAX_UINT16, getRandomUInt } from "../utils/uint.ts";
 
@@ -124,7 +129,7 @@ describe("WormholeTransceiver", () => {
     expect(await client.state.global.version()).toEqual(1n);
     expect(await client.state.global.transceiverManager()).toEqual(transceiverManagerAppId);
     expect(await client.state.global.wormholeCore()).toEqual(wormholeCoreAppId);
-    expect(await client.state.global.chainId()).toEqual(SOURCE_CHAIN_ID);
+    expect(await client.state.global.chainId()).toEqual(Number(SOURCE_CHAIN_ID));
     expect(await client.state.global.emitterLsig()).toEqual(emitterLogicSig.toString());
 
     expect(Uint8Array.from(await client.defaultAdminRole())).toEqual(DEFAULT_ADMIN_ROLE);
@@ -155,6 +160,20 @@ describe("WormholeTransceiver", () => {
       await expect(
         client.send.receiveMessage({ sender: user, args: [verifyVAATxn], appReferences: [transceiverManagerAppId] }),
       ).rejects.toThrow("Uninitialised contract");
+    });
+
+    test.each([
+      { adminLength: 30, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { adminLength: 34, arg: "arc4.static_array<arc4.uint8, 32>" },
+    ])(`fails to initialise when admin is bytes`, async ({ adminLength, arg }) => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: admin,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [client.appClient.getABIMethod("initialise").getSelector(), getRandomBytes(adminLength)],
+        }),
+      ).rejects.toThrow(`invalid number of bytes for ${arg}`);
     });
 
     test("succeeds to initialise and sets correct state", async () => {
@@ -194,6 +213,29 @@ describe("WormholeTransceiver", () => {
   });
 
   describe("set wormhole peer", () => {
+    test.each([
+      { chainIdLength: 1, contractLength: 32, arg: "arc4.uint16" },
+      { chainIdLength: 4, contractLength: 32, arg: "arc4.uint16" },
+      { chainIdLength: 2, contractLength: 30, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { chainIdLength: 2, contractLength: 34, arg: "arc4.static_array<arc4.uint8, 32>" },
+    ])(
+      `fails when chain id is $chainIdLength and contract is $contractLength bytes`,
+      async ({ chainIdLength, contractLength, arg }) => {
+        await expect(
+          localnet.algorand.send.appCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("set_wormhole_peer").getSelector(),
+              convertNumberToBytes(0, chainIdLength),
+              getRandomBytes(contractLength),
+            ],
+          }),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
+
     test("fails when caller is not manager", async () => {
       await expect(
         client.send.setWormholePeer({
@@ -371,267 +413,215 @@ describe("WormholeTransceiver", () => {
       await transceiverManagerClient.send.setMessageDigest({ args: [MESSAGE_DIGEST] });
     });
 
-    describe("manual", () => {
-      test("fails when verify vaa call not to wormhole core", async () => {
-        const fakeWormholeCoreAppId = await deployWormholeCore(localnet, creator, WORMHOLE_CORE_MESSAGE_FEE);
-        const sequence = getRandomUInt(1000);
-        const message = getRandomMessageToSend({ destinationChainId: Number(SOURCE_CHAIN_ID) });
-        const { vaaBytes, vaaDigest } = getWormholeVAA(
-          PEER_CHAIN_ID,
-          PEER_CONTRACT_ADDRESS,
-          sequence,
-          encodeMessageToSend(message),
-        );
-
-        const verifyVAATxn = await localnet.algorand.createTransaction.appCall({
-          sender: user,
-          appId: fakeWormholeCoreAppId,
-          onComplete: OnApplicationComplete.NoOpOC,
-          args: [enc.encode("verifyVAA"), vaaBytes],
-        });
-        await expect(
-          client.send.receiveMessage({
-            sender: user,
-            args: [verifyVAATxn],
-            appReferences: [transceiverManagerAppId],
-            boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID), getVAAsConsumedBoxKey(vaaDigest)],
-            extraFee: (1000).microAlgos(),
-          }),
-        ).rejects.toThrow("Incorrect app call id");
+    test("fails when verify vaa call isn't app call", async () => {
+      const verifyVAATxn = await localnet.algorand.createTransaction.payment({
+        sender: user,
+        receiver: user,
+        amount: (0).microAlgo(),
       });
-
-      test("fails when verify vaa call isn't a noop", async () => {
-        const sequence = getRandomUInt(1000);
-        const message = getRandomMessageToSend({ destinationChainId: Number(SOURCE_CHAIN_ID) });
-        const { vaaBytes, vaaDigest } = getWormholeVAA(
-          PEER_CHAIN_ID,
-          PEER_CONTRACT_ADDRESS,
-          sequence,
-          encodeMessageToSend(message),
-        );
-
-        const verifyVAATxn = await localnet.algorand.createTransaction.appCall({
-          sender: user,
-          appId: wormholeCoreAppId,
-          onComplete: OnApplicationComplete.OptInOC,
-          args: [enc.encode("verifyVAA"), vaaBytes],
-        });
-        await expect(
-          client.send.receiveMessage({
-            sender: user,
-            args: [verifyVAATxn],
-            appReferences: [transceiverManagerAppId],
-            boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID), getVAAsConsumedBoxKey(vaaDigest)],
-            extraFee: (1000).microAlgos(),
-          }),
-        ).rejects.toThrow("Incorrect app call on completion");
-      });
-
-      test("fails when verify vaa call isn't verifyVAA", async () => {
-        const emitterLsig = await client.state.global.emitterLsig();
-        const verifyVAATxn = await localnet.algorand.createTransaction.appCall({
-          sender: user,
-          appId: wormholeCoreAppId,
-          onComplete: OnApplicationComplete.NoOpOC,
-          args: [enc.encode("publishMessage"), getRandomBytes(100), convertNumberToBytes(0, 8)],
-          accountReferences: [emitterLsig!],
-        });
-        await expect(
-          client.send.receiveMessage({
-            sender: user,
-            args: [verifyVAATxn],
-            appReferences: [transceiverManagerAppId],
-            boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID)],
-            extraFee: (1000).microAlgos(),
-          }),
-        ).rejects.toThrow("Incorrect app call method");
-      });
-
-      test("fails when payload doesn't have correct prefix", async () => {
-        const sequence = getRandomUInt(1000);
-        const message = getRandomMessageToSend({ destinationChainId: Number(SOURCE_CHAIN_ID) });
-        const { header, body } = getWormholeVAA(
-          PEER_CHAIN_ID,
-          PEER_CONTRACT_ADDRESS,
-          sequence,
-          encodeMessageToSend(message),
-        );
-
-        // replace prefix directly and re-calculate
-        body.set(getRandomBytes(4), 51);
-        const vaaBytes = Uint8Array.from([...header, ...body]);
-        const digest = keccak_256(keccak_256(body));
-
-        const verifyVAATxn = await localnet.algorand.createTransaction.appCall({
-          sender: user,
-          appId: wormholeCoreAppId,
-          onComplete: OnApplicationComplete.NoOpOC,
-          args: [enc.encode("verifyVAA"), vaaBytes],
-        });
-        await expect(
-          client.send.receiveMessage({
-            sender: user,
-            args: [verifyVAATxn],
-            appReferences: [transceiverManagerAppId],
-            boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID), getVAAsConsumedBoxKey(digest)],
-            extraFee: (1000).microAlgos(),
-          }),
-        ).rejects.toThrow("Incorrect prefix");
-      });
-
-      test("fails when emitter chain is unknown", async () => {
-        const emitterChainId = 1;
-        expect(emitterChainId).not.toEqual(PEER_CHAIN_ID);
-
-        const sequence = getRandomUInt(1000);
-        const message = getRandomMessageToSend({ destinationChainId: Number(SOURCE_CHAIN_ID) });
-        const { vaaBytes, vaaDigest } = getWormholeVAA(
-          emitterChainId,
-          PEER_CONTRACT_ADDRESS,
-          sequence,
-          encodeMessageToSend(message),
-        );
-
-        const verifyVAATxn = await localnet.algorand.createTransaction.appCall({
-          sender: user,
-          appId: wormholeCoreAppId,
-          onComplete: OnApplicationComplete.NoOpOC,
-          args: [enc.encode("verifyVAA"), vaaBytes],
-        });
-        await expect(
-          client.send.receiveMessage({
-            sender: user,
-            args: [verifyVAATxn],
-            appReferences: [transceiverManagerAppId],
-            boxReferences: [getWormholePeersBoxKey(emitterChainId), getVAAsConsumedBoxKey(vaaDigest)],
-            extraFee: (1000).microAlgos(),
-          }),
-        ).rejects.toThrow("Unknown peer chain");
-      });
-
-      test("fails when source chain is known but source address doesn't match", async () => {
-        const emitterAddress = getRandomBytes(32);
-        expect(Uint8Array.from(await client.getWormholePeer({ args: [PEER_CHAIN_ID] }))).not.toEqual(emitterAddress);
-
-        const sequence = getRandomUInt(1000);
-        const message = getRandomMessageToSend({ destinationChainId: Number(SOURCE_CHAIN_ID) });
-        const { vaaBytes, vaaDigest } = getWormholeVAA(
-          PEER_CHAIN_ID,
-          emitterAddress,
-          sequence,
-          encodeMessageToSend(message),
-        );
-
-        const verifyVAATxn = await localnet.algorand.createTransaction.appCall({
-          sender: user,
-          appId: wormholeCoreAppId,
-          onComplete: OnApplicationComplete.NoOpOC,
-          args: [enc.encode("verifyVAA"), vaaBytes],
-        });
-        await expect(
-          client.send.receiveMessage({
-            sender: user,
-            args: [verifyVAATxn],
-            appReferences: [transceiverManagerAppId],
-            boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID), getVAAsConsumedBoxKey(vaaDigest)],
-            extraFee: (1000).microAlgos(),
-          }),
-        ).rejects.toThrow("Unknown peer address");
-      });
-
-      test("succeeds and delivers message to transceiver manager", async () => {
-        const APP_MIN_BALANCE = (21_300).microAlgos();
-        const sequence = getRandomUInt(1000);
-        const message = getRandomMessageToSend({ destinationChainId: Number(SOURCE_CHAIN_ID) });
-        const { vaaBytes, vaaDigest } = getWormholeVAA(
-          PEER_CHAIN_ID,
-          PEER_CONTRACT_ADDRESS,
-          sequence,
-          encodeMessageToSend(message),
-        );
-
-        const fundingTxn = await localnet.algorand.createTransaction.payment({
-          sender: creator,
-          receiver: getApplicationAddress(appId),
-          amount: APP_MIN_BALANCE,
-        });
-        const verifyVAATxn = await localnet.algorand.createTransaction.appCall({
-          sender: user,
-          appId: wormholeCoreAppId,
-          onComplete: OnApplicationComplete.NoOpOC,
-          args: [enc.encode("verifyVAA"), vaaBytes],
-        });
-        const res = await client
+      await expect(
+        localnet.algorand
           .newGroup()
-          .addTransaction(fundingTxn)
-          .receiveMessage({
+          .addTransaction(verifyVAATxn)
+          .addAppCall({
             sender: user,
-            args: [verifyVAATxn],
-            appReferences: [transceiverManagerAppId],
-            boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID), getVAAsConsumedBoxKey(vaaDigest)],
-            extraFee: (1000).microAlgos(),
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [client.appClient.getABIMethod("receive_message").getSelector()],
           })
-          .send();
+          .send(),
+      ).rejects.toThrow("transaction type is appl");
+    });
 
-        expect(res.confirmations[2].logs).toBeDefined();
-        expect(res.confirmations[2].logs![0]).toEqual(
-          getEventBytes("ReceivedMessage(byte[32],byte[32])", [vaaDigest, message.id]),
-        );
-        expect(res.confirmations[2].innerTxns!.length).toEqual(1);
-        expect(res.confirmations[2].innerTxns![0].txn.txn.type).toEqual("appl");
-        expect(res.confirmations[2].innerTxns![0].txn.txn.applicationCall!.appIndex).toEqual(transceiverManagerAppId);
-        expect(res.confirmations[2].innerTxns![0].logs![0]).toEqual(
-          getEventBytes("AttestationReceived(byte[32],uint16,byte[32],uint64,byte[32],uint64)", [
-            message.id,
-            PEER_CHAIN_ID,
-            message.sourceAddress,
-            convertBytesToNumber(message.handlerAddress),
-            MESSAGE_DIGEST,
-            1,
-          ]),
-        );
+    test("fails when verify vaa call not to wormhole core", async () => {
+      const fakeWormholeCoreAppId = await deployWormholeCore(localnet, creator, WORMHOLE_CORE_MESSAGE_FEE);
+      const sequence = getRandomUInt(1000);
+      const message = getRandomMessageToSend({ destinationChainId: Number(SOURCE_CHAIN_ID) });
+      const { vaaBytes, vaaDigest } = getWormholeVAA(
+        PEER_CHAIN_ID,
+        PEER_CONTRACT_ADDRESS,
+        sequence,
+        encodeMessageToSend(message),
+      );
 
-        const isConsumed = await client.state.box.vaasConsumed.value(vaaDigest);
-        expect(isConsumed).toBeTruthy();
+      const verifyVAATxn = await localnet.algorand.createTransaction.appCall({
+        sender: user,
+        appId: fakeWormholeCoreAppId,
+        onComplete: OnApplicationComplete.NoOpOC,
+        args: [enc.encode("verifyVAA"), vaaBytes],
       });
+      await expect(
+        client.send.receiveMessage({
+          sender: user,
+          args: [verifyVAATxn],
+          appReferences: [transceiverManagerAppId],
+          boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID), getVAAsConsumedBoxKey(vaaDigest)],
+          extraFee: (1000).microAlgos(),
+        }),
+      ).rejects.toThrow("Incorrect app call id");
+    });
 
-      test("fails when vaa is already consumed", async () => {
-        const APP_MIN_BALANCE = (21_300).microAlgos();
+    test("fails when verify vaa call isn't a noop", async () => {
+      const sequence = getRandomUInt(1000);
+      const message = getRandomMessageToSend({ destinationChainId: Number(SOURCE_CHAIN_ID) });
+      const { vaaBytes, vaaDigest } = getWormholeVAA(
+        PEER_CHAIN_ID,
+        PEER_CONTRACT_ADDRESS,
+        sequence,
+        encodeMessageToSend(message),
+      );
+
+      const verifyVAATxn = await localnet.algorand.createTransaction.appCall({
+        sender: user,
+        appId: wormholeCoreAppId,
+        onComplete: OnApplicationComplete.OptInOC,
+        args: [enc.encode("verifyVAA"), vaaBytes],
+      });
+      await expect(
+        client.send.receiveMessage({
+          sender: user,
+          args: [verifyVAATxn],
+          appReferences: [transceiverManagerAppId],
+          boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID), getVAAsConsumedBoxKey(vaaDigest)],
+          extraFee: (1000).microAlgos(),
+        }),
+      ).rejects.toThrow("Incorrect app call on completion");
+    });
+
+    test("fails when verify vaa call isn't verifyVAA", async () => {
+      const emitterLsig = await client.state.global.emitterLsig();
+      const verifyVAATxn = await localnet.algorand.createTransaction.appCall({
+        sender: user,
+        appId: wormholeCoreAppId,
+        onComplete: OnApplicationComplete.NoOpOC,
+        args: [enc.encode("publishMessage"), getRandomBytes(100), convertNumberToBytes(0, 8)],
+        accountReferences: [emitterLsig!],
+      });
+      await expect(
+        client.send.receiveMessage({
+          sender: user,
+          args: [verifyVAATxn],
+          appReferences: [transceiverManagerAppId],
+          boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID)],
+          extraFee: (1000).microAlgos(),
+        }),
+      ).rejects.toThrow("Incorrect app call method");
+    });
+
+    test("fails when payload doesn't have correct prefix", async () => {
+      const sequence = getRandomUInt(1000);
+      const message = getRandomMessageToSend({ destinationChainId: Number(SOURCE_CHAIN_ID) });
+      const { header, body } = getWormholeVAA(
+        PEER_CHAIN_ID,
+        PEER_CONTRACT_ADDRESS,
+        sequence,
+        encodeMessageToSend(message),
+      );
+
+      // replace prefix directly and re-calculate
+      body.set(getRandomBytes(4), 51);
+      const vaaBytes = Uint8Array.from([...header, ...body]);
+      const digest = keccak_256(keccak_256(body));
+
+      const verifyVAATxn = await localnet.algorand.createTransaction.appCall({
+        sender: user,
+        appId: wormholeCoreAppId,
+        onComplete: OnApplicationComplete.NoOpOC,
+        args: [enc.encode("verifyVAA"), vaaBytes],
+      });
+      await expect(
+        client.send.receiveMessage({
+          sender: user,
+          args: [verifyVAATxn],
+          appReferences: [transceiverManagerAppId],
+          boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID), getVAAsConsumedBoxKey(digest)],
+          extraFee: (1000).microAlgos(),
+        }),
+      ).rejects.toThrow("Incorrect prefix");
+    });
+
+    test("fails when emitter chain is unknown", async () => {
+      const emitterChainId = 1;
+      expect(emitterChainId).not.toEqual(PEER_CHAIN_ID);
+
+      const sequence = getRandomUInt(1000);
+      const message = getRandomMessageToSend({ destinationChainId: Number(SOURCE_CHAIN_ID) });
+      const { vaaBytes, vaaDigest } = getWormholeVAA(
+        emitterChainId,
+        PEER_CONTRACT_ADDRESS,
+        sequence,
+        encodeMessageToSend(message),
+      );
+
+      const verifyVAATxn = await localnet.algorand.createTransaction.appCall({
+        sender: user,
+        appId: wormholeCoreAppId,
+        onComplete: OnApplicationComplete.NoOpOC,
+        args: [enc.encode("verifyVAA"), vaaBytes],
+      });
+      await expect(
+        client.send.receiveMessage({
+          sender: user,
+          args: [verifyVAATxn],
+          appReferences: [transceiverManagerAppId],
+          boxReferences: [getWormholePeersBoxKey(emitterChainId), getVAAsConsumedBoxKey(vaaDigest)],
+          extraFee: (1000).microAlgos(),
+        }),
+      ).rejects.toThrow("Unknown peer chain");
+    });
+
+    test("fails when source chain is known but source address doesn't match", async () => {
+      const emitterAddress = getRandomBytes(32);
+      expect(Uint8Array.from(await client.getWormholePeer({ args: [PEER_CHAIN_ID] }))).not.toEqual(emitterAddress);
+
+      const sequence = getRandomUInt(1000);
+      const message = getRandomMessageToSend({ destinationChainId: Number(SOURCE_CHAIN_ID) });
+      const { vaaBytes, vaaDigest } = getWormholeVAA(
+        PEER_CHAIN_ID,
+        emitterAddress,
+        sequence,
+        encodeMessageToSend(message),
+      );
+
+      const verifyVAATxn = await localnet.algorand.createTransaction.appCall({
+        sender: user,
+        appId: wormholeCoreAppId,
+        onComplete: OnApplicationComplete.NoOpOC,
+        args: [enc.encode("verifyVAA"), vaaBytes],
+      });
+      await expect(
+        client.send.receiveMessage({
+          sender: user,
+          args: [verifyVAATxn],
+          appReferences: [transceiverManagerAppId],
+          boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID), getVAAsConsumedBoxKey(vaaDigest)],
+          extraFee: (1000).microAlgos(),
+        }),
+      ).rejects.toThrow("Unknown peer address");
+    });
+
+    test.each([{ messagePayloadLengthDelta: -1 }, { messagePayloadLengthDelta: 1 }])(
+      "fails when message payload length delta is $messagePayloadLengthDelta bytes",
+      async ({ messagePayloadLengthDelta }) => {
         const sequence = getRandomUInt(1000);
         const message = getRandomMessageToSend({ destinationChainId: Number(SOURCE_CHAIN_ID) });
-        const { vaaBytes, vaaDigest } = getWormholeVAA(
-          PEER_CHAIN_ID,
-          PEER_CONTRACT_ADDRESS,
-          sequence,
-          encodeMessageToSend(message),
-        );
+        const handlerPayload = Uint8Array.from([
+          ...message.id,
+          ...message.userAddress,
+          ...convertNumberToBytes(message.payload.length + messagePayloadLengthDelta, 2),
+          ...message.payload,
+        ]);
+        const encodedMessage = Uint8Array.from([
+          ...WORMHOLE_TRANSCEIVER_PAYLOAD_PREFIX,
+          ...message.sourceAddress,
+          ...message.handlerAddress,
+          ...convertNumberToBytes(handlerPayload.length, 2),
+          ...handlerPayload,
+          ...convertNumberToBytes(0, 2),
+        ]);
+        const { vaaBytes, vaaDigest } = getWormholeVAA(PEER_CHAIN_ID, PEER_CONTRACT_ADDRESS, sequence, encodedMessage);
 
-        // receive once
-        const fundingTxn = await localnet.algorand.createTransaction.payment({
-          sender: creator,
-          receiver: getApplicationAddress(appId),
-          amount: APP_MIN_BALANCE,
-        });
-        let verifyVAATxn = await localnet.algorand.createTransaction.appCall({
-          sender: user,
-          appId: wormholeCoreAppId,
-          onComplete: OnApplicationComplete.NoOpOC,
-          args: [enc.encode("verifyVAA"), vaaBytes],
-        });
-        await client
-          .newGroup()
-          .addTransaction(fundingTxn)
-          .receiveMessage({
-            sender: user,
-            args: [verifyVAATxn],
-            appReferences: [transceiverManagerAppId],
-            boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID), getVAAsConsumedBoxKey(vaaDigest)],
-            extraFee: (1000).microAlgos(),
-          })
-          .send();
-
-        // receive again
-        verifyVAATxn = await localnet.algorand.createTransaction.appCall({
+        const verifyVAATxn = await localnet.algorand.createTransaction.appCall({
           sender: user,
           appId: wormholeCoreAppId,
           onComplete: OnApplicationComplete.NoOpOC,
@@ -645,8 +635,117 @@ describe("WormholeTransceiver", () => {
             boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID), getVAAsConsumedBoxKey(vaaDigest)],
             extraFee: (1000).microAlgos(),
           }),
-        ).rejects.toThrow("VAA already seen");
+        ).rejects.toThrow("Incorrect length");
+      },
+    );
+
+    test("succeeds and delivers message to transceiver manager", async () => {
+      const APP_MIN_BALANCE = (21_300).microAlgos();
+      const sequence = getRandomUInt(1000);
+      const message = getRandomMessageToSend({ destinationChainId: Number(SOURCE_CHAIN_ID) });
+      const { vaaBytes, vaaDigest } = getWormholeVAA(
+        PEER_CHAIN_ID,
+        PEER_CONTRACT_ADDRESS,
+        sequence,
+        encodeMessageToSend(message),
+      );
+
+      const fundingTxn = await localnet.algorand.createTransaction.payment({
+        sender: creator,
+        receiver: getApplicationAddress(appId),
+        amount: APP_MIN_BALANCE,
       });
+      const verifyVAATxn = await localnet.algorand.createTransaction.appCall({
+        sender: user,
+        appId: wormholeCoreAppId,
+        onComplete: OnApplicationComplete.NoOpOC,
+        args: [enc.encode("verifyVAA"), vaaBytes],
+      });
+      const res = await client
+        .newGroup()
+        .addTransaction(fundingTxn)
+        .receiveMessage({
+          sender: user,
+          args: [verifyVAATxn],
+          appReferences: [transceiverManagerAppId],
+          boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID), getVAAsConsumedBoxKey(vaaDigest)],
+          extraFee: (1000).microAlgos(),
+        })
+        .send();
+
+      expect(res.confirmations[2].logs).toBeDefined();
+      expect(res.confirmations[2].logs![0]).toEqual(
+        getEventBytes("ReceivedMessage(byte[32],byte[32])", [vaaDigest, message.id]),
+      );
+      expect(res.confirmations[2].innerTxns!.length).toEqual(1);
+      expect(res.confirmations[2].innerTxns![0].txn.txn.type).toEqual("appl");
+      expect(res.confirmations[2].innerTxns![0].txn.txn.applicationCall!.appIndex).toEqual(transceiverManagerAppId);
+      expect(res.confirmations[2].innerTxns![0].logs![0]).toEqual(
+        getEventBytes("AttestationReceived(byte[32],uint16,byte[32],uint64,byte[32],uint64)", [
+          message.id,
+          PEER_CHAIN_ID,
+          message.sourceAddress,
+          convertBytesToNumber(message.handlerAddress),
+          MESSAGE_DIGEST,
+          1,
+        ]),
+      );
+
+      const isConsumed = await client.state.box.vaasConsumed.value(vaaDigest);
+      expect(isConsumed).toBeTruthy();
+    });
+
+    test("fails when vaa is already consumed", async () => {
+      const APP_MIN_BALANCE = (21_300).microAlgos();
+      const sequence = getRandomUInt(1000);
+      const message = getRandomMessageToSend({ destinationChainId: Number(SOURCE_CHAIN_ID) });
+      const { vaaBytes, vaaDigest } = getWormholeVAA(
+        PEER_CHAIN_ID,
+        PEER_CONTRACT_ADDRESS,
+        sequence,
+        encodeMessageToSend(message),
+      );
+
+      // receive once
+      const fundingTxn = await localnet.algorand.createTransaction.payment({
+        sender: creator,
+        receiver: getApplicationAddress(appId),
+        amount: APP_MIN_BALANCE,
+      });
+      let verifyVAATxn = await localnet.algorand.createTransaction.appCall({
+        sender: user,
+        appId: wormholeCoreAppId,
+        onComplete: OnApplicationComplete.NoOpOC,
+        args: [enc.encode("verifyVAA"), vaaBytes],
+      });
+      await client
+        .newGroup()
+        .addTransaction(fundingTxn)
+        .receiveMessage({
+          sender: user,
+          args: [verifyVAATxn],
+          appReferences: [transceiverManagerAppId],
+          boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID), getVAAsConsumedBoxKey(vaaDigest)],
+          extraFee: (1000).microAlgos(),
+        })
+        .send();
+
+      // receive again
+      verifyVAATxn = await localnet.algorand.createTransaction.appCall({
+        sender: user,
+        appId: wormholeCoreAppId,
+        onComplete: OnApplicationComplete.NoOpOC,
+        args: [enc.encode("verifyVAA"), vaaBytes],
+      });
+      await expect(
+        client.send.receiveMessage({
+          sender: user,
+          args: [verifyVAATxn],
+          appReferences: [transceiverManagerAppId],
+          boxReferences: [getWormholePeersBoxKey(PEER_CHAIN_ID), getVAAsConsumedBoxKey(vaaDigest)],
+          extraFee: (1000).microAlgos(),
+        }),
+      ).rejects.toThrow("VAA already seen");
     });
   });
 });

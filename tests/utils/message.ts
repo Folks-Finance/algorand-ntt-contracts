@@ -19,10 +19,15 @@ export function getRandomMessageToSend(override?: Partial<MessageToSend>): Messa
   };
 }
 
-const WORMHOLE_TRANSCEIVER_PAYLOAD_PREFIX = Uint8Array.from(Buffer.from("9945FF10", "hex"));
+export const WORMHOLE_TRANSCEIVER_PAYLOAD_PREFIX = Uint8Array.from(Buffer.from("9945FF10", "hex"));
 
 export function encodeMessageToSend(message: MessageToSend): Uint8Array {
-  const handlerPayload = Uint8Array.from([...message.id, ...message.userAddress, ...message.payload]);
+  const handlerPayload = Uint8Array.from([
+    ...message.id,
+    ...message.userAddress,
+    ...convertNumberToBytes(message.payload.length, 2),
+    ...message.payload,
+  ]);
   return Uint8Array.from([
     ...WORMHOLE_TRANSCEIVER_PAYLOAD_PREFIX,
     ...message.sourceAddress,
@@ -86,6 +91,7 @@ export function calculateMessageDigest(message: MessageReceived): Uint8Array {
       ...convertNumberToBytes(message.sourceChainId, 2),
       ...message.sourceAddress,
       ...message.handlerAddress,
+      ...convertNumberToBytes(message.payload.length, 2),
       ...message.payload,
     ]),
   );

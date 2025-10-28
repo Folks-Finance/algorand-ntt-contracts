@@ -18,6 +18,7 @@ FEE_PAYMENT_AMOUNT_INSUFFICIENT = "Insufficient fee payment amount"
 FEE_PAYMENT_AMOUNT_INCORRECT = "Incorrect fee payment amount"
 
 PREFIX_INCORRECT = "Incorrect prefix"
+LENGTH_INCORRECT = "Incorrect length"
 
 ASSET_UNKNOWN = "Unknown asset"
 ASSET_RECEIVER_UNKNOWN = "Unknown asset receiver"

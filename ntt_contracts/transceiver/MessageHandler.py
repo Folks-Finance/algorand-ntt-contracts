@@ -2,8 +2,9 @@ from abc import ABC, abstractmethod
 from algopy import ARC4Contract, BoxMap, Global, GlobalState, UInt64, itxn, op, subroutine
 from algopy.arc4 import Address, Bool, Struct, abi_call, abimethod, emit
 
+from folks_contracts.library import BytesUtils
 from .. import errors as err
-from ..types import ARC4UInt64, MessageDigest, MessageReceived, MessageToSend, TransceiverInstructions
+from ..types import ARC4UInt64, Bytes32, MessageDigest, MessageReceived, MessageToSend, TransceiverInstructions
 from .interfaces.ITransceiverManager import ITransceiverManager
 
 
@@ -52,7 +53,8 @@ class MessageHandler(ARC4Contract, ABC):
         )
 
         # check if handler is correct
-        assert Address(message.handler_address.bytes) == Global.current_application_address, err.MESSAGE_HANDLER_ADDRESS_MISMATCH
+        assert (BytesUtils.safe_convert_bytes32_to_uint64(message.handler_address.copy())
+                == Global.current_application_id.id), err.MESSAGE_HANDLER_ADDRESS_MISMATCH
 
         # check if required attestations have been met
         assert self.is_message_approved(message_digest), err.MESSAGE_NOT_APPROVED

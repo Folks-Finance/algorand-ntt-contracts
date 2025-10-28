@@ -1,4 +1,3 @@
-from algopy import Bytes, UInt64
 from algopy.arc4 import (
     Byte,
     DynamicArray,
@@ -44,7 +43,7 @@ class MessageToSend(NamedTuple):
     source_address: UniversalAddress
     destination_chain_id: ARC4UInt16
     handler_address: UniversalAddress
-    payload: Bytes
+    payload: DynamicBytes
 
 class MessageReceived(NamedTuple):
     id: MessageId # used to group messages from different transceivers
@@ -52,4 +51,4 @@ class MessageReceived(NamedTuple):
     source_chain_id: ARC4UInt16
     source_address: UniversalAddress
     handler_address: UniversalAddress
-    payload: Bytes
+    payload: DynamicBytes
