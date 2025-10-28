@@ -1,11 +1,11 @@
 import { algorandFixture } from "@algorandfoundation/algokit-utils/testing";
 import type { TransactionSignerAccount } from "@algorandfoundation/algokit-utils/types/account";
-import { getApplicationAddress } from "algosdk";
+import { OnApplicationComplete, getApplicationAddress } from "algosdk";
 import type { Account, Address } from "algosdk";
 
 import { EmptyNttTokenClient, EmptyNttTokenFactory } from "../../specs/client/EmptyNttToken.client.ts";
 import { getAddressRolesBoxKey, getRoleBoxKey } from "../utils/boxes.ts";
-import { getEventBytes, getRoleBytes } from "../utils/bytes.ts";
+import { convertNumberToBytes, getEventBytes, getRandomBytes, getRoleBytes } from "../utils/bytes.ts";
 import { SECONDS_IN_DAY } from "../utils/time.ts";
 
 describe("NttToken", () => {
@@ -123,6 +123,20 @@ describe("NttToken", () => {
       });
     });
 
+    test.each([
+      { minterLength: 30, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { minterLength: 34, arg: "arc4.static_array<arc4.uint8, 32>" },
+    ])(`fails when minter is $minterLength bytes`, async ({ minterLength, arg }) => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: defaultAdmin,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [client.appClient.getABIMethod("set_minter").getSelector(), getRandomBytes(minterLength)],
+        }),
+      ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+    });
+
     test("fails when caller is not minter", async () => {
       await expect(
         client.send.setMinter({
@@ -152,6 +166,26 @@ describe("NttToken", () => {
   });
 
   describe("mint", () => {
+    test.each([
+      { receiverLength: 30, amountLength: 8, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { receiverLength: 34, amountLength: 8, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { receiverLength: 32, amountLength: 4, arg: "arc4.uint64" },
+      { receiverLength: 32, amountLength: 16, arg: "arc4.uint64" },
+    ])(`fails when minter is $receiverLength bytes`, async ({ receiverLength, amountLength, arg }) => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: defaultAdmin,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [
+            client.appClient.getABIMethod("mint").getSelector(),
+            getRandomBytes(receiverLength),
+            convertNumberToBytes(0, amountLength),
+          ],
+        }),
+      ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+    });
+
     test("fails when caller is not minter", async () => {
       await expect(
         client.send.mint({
@@ -161,5 +195,7 @@ describe("NttToken", () => {
         }),
       ).rejects.toThrow("Access control unauthorised account");
     });
+
+    // succeeds test in child contracts' tests
   });
 });

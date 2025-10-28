@@ -1,13 +1,19 @@
 import { algorandFixture } from "@algorandfoundation/algokit-utils/testing";
 import type { TransactionSignerAccount } from "@algorandfoundation/algokit-utils/types/account";
-import { type Account, type Address, getApplicationAddress } from "algosdk";
+import { type Account, type Address, OnApplicationComplete, getApplicationAddress } from "algosdk";
 
 import { MockTransceiverClient, MockTransceiverFactory } from "../../specs/client/MockTransceiver.client.ts";
 import {
   MockTransceiverManagerClient,
   MockTransceiverManagerFactory,
 } from "../../specs/client/MockTransceiverManager.client.ts";
-import { convertBytesToNumber, getEventBytes, getRandomBytes, getRoleBytes } from "../utils/bytes.ts";
+import {
+  convertBytesToNumber,
+  convertNumberToBytes,
+  getEventBytes,
+  getRandomBytes,
+  getRoleBytes,
+} from "../utils/bytes.ts";
 import { getMessageReceived, getRandomMessageToSend } from "../utils/message.ts";
 import { SECONDS_IN_DAY } from "../utils/time.ts";
 import { MAX_UINT16, getRandomUInt } from "../utils/uint.ts";
@@ -115,6 +121,125 @@ describe("Transceiver", () => {
   });
 
   describe("send message", () => {
+    test("fails when fee payment isn't payment", async () => {
+      const feePaymentTxn = await localnet.algorand.createTransaction.assetCreate({
+        sender: user,
+        total: 0n,
+        decimals: 0,
+        assetName: "",
+        unitName: "",
+      });
+      await expect(
+        localnet.algorand
+          .newGroup()
+          .addTransaction(feePaymentTxn)
+          .addAppCall({
+            sender: user,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("send_message").getSelector(),
+              getRandomBytes(132),
+              convertNumberToBytes(0, 2),
+            ],
+          })
+          .send(),
+      ).rejects.toThrow("transaction type is pay");
+    });
+
+    test("fails when message length is less than 132 bytes", async () => {
+      const feePaymentTxn = await localnet.algorand.createTransaction.payment({
+        sender: user,
+        receiver: getApplicationAddress(appId),
+        amount: (0).microAlgo(),
+      });
+      await expect(
+        localnet.algorand
+          .newGroup()
+          .addTransaction(feePaymentTxn)
+          .addAppCall({
+            sender: user,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("send_message").getSelector(),
+              getRandomBytes(131),
+              convertNumberToBytes(0, 2),
+            ],
+            extraFee: (2000).microAlgos(),
+          })
+          .send(),
+      ).rejects.toThrow(`invalid tuple encoding`);
+    });
+
+    test("fails when message pointer is not to payload", async () => {
+      const feePaymentTxn = await localnet.algorand.createTransaction.payment({
+        sender: user,
+        receiver: getApplicationAddress(appId),
+        amount: (0).microAlgo(),
+      });
+      await expect(
+        localnet.algorand
+          .newGroup()
+          .addTransaction(feePaymentTxn)
+          .addAppCall({
+            sender: user,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("send_message").getSelector(),
+              Uint8Array.from([...getRandomBytes(130), ...convertNumberToBytes(129, 2)]),
+              convertNumberToBytes(0, 2),
+            ],
+            extraFee: (2000).microAlgos(),
+          })
+          .send(),
+      ).rejects.toThrow(`invalid tail pointer at index 5`);
+    });
+
+    test.each([
+      { messagePayloadLengthDelta: -1, transceiverInstructionLengthDelta: 0, arg: "ntt_contracts.types.MessageToSend" },
+      { messagePayloadLengthDelta: 1, transceiverInstructionLengthDelta: 0, arg: "ntt_contracts.types.MessageToSend" },
+      { messagePayloadLengthDelta: 0, transceiverInstructionLengthDelta: -1, arg: "arc4.dynamic_array<arc4.uint8>" },
+      { messagePayloadLengthDelta: 0, transceiverInstructionLengthDelta: 1, arg: "arc4.dynamic_array<arc4.uint8>" },
+    ])(
+      "fails when message payload length delta is $messagePayloadLengthDelta and transceiver instruction length delta is $transceiverInstructionLengthDelta bytes",
+      async ({ messagePayloadLengthDelta, transceiverInstructionLengthDelta, arg }) => {
+        const feePaymentTxn = await localnet.algorand.createTransaction.payment({
+          sender: user,
+          receiver: getApplicationAddress(appId),
+          amount: (0).microAlgo(),
+        });
+        const payload = getRandomBytes(50);
+        const transceiverInstruction = getRandomBytes(10);
+        await expect(
+          localnet.algorand
+            .newGroup()
+            .addTransaction(feePaymentTxn)
+            .addAppCall({
+              sender: user,
+              appId,
+              onComplete: OnApplicationComplete.NoOpOC,
+              args: [
+                client.appClient.getABIMethod("send_message").getSelector(),
+                Uint8Array.from([
+                  ...getRandomBytes(130),
+                  ...convertNumberToBytes(132, 2),
+                  ...convertNumberToBytes(payload.length + messagePayloadLengthDelta, 2),
+                  ...payload,
+                ]),
+                Uint8Array.from([
+                  ...convertNumberToBytes(transceiverInstruction.length + transceiverInstructionLengthDelta, 2),
+                  ...transceiverInstruction,
+                ]),
+              ],
+              extraFee: (2000).microAlgos(),
+            })
+            .send(),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
+
     test("fails when caller is not transceiver manager", async () => {
       const feePaymentTxn = await localnet.algorand.createTransaction.payment({
         sender: user,

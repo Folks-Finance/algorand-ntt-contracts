@@ -1,6 +1,6 @@
 import { algorandFixture } from "@algorandfoundation/algokit-utils/testing";
 import type { TransactionSignerAccount } from "@algorandfoundation/algokit-utils/types/account";
-import { type Account, type Address, getApplicationAddress } from "algosdk";
+import { type Account, type Address, OnApplicationComplete, getApplicationAddress } from "algosdk";
 
 import {
   NttRateLimiterExposedClient,
@@ -16,6 +16,7 @@ import {
   getRoleBoxKey,
 } from "../utils/boxes.ts";
 import {
+  convertNumberToBytes,
   getEventBytes,
   getInboundBucketIdBytes,
   getOutboundBucketIdBytes,
@@ -142,6 +143,20 @@ describe("NttRateLimiter", () => {
       );
     });
 
+    test.each([
+      { adminLength: 30, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { adminLength: 34, arg: "arc4.static_array<arc4.uint8, 32>" },
+    ])(`fails to initialise when admin is $adminLength bytes`, async ({ adminLength, arg }) => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: admin,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [client.appClient.getABIMethod("initialise").getSelector(), getRandomBytes(adminLength)],
+        }),
+      ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+    });
+
     test("succeeds to initialise and sets correct state", async () => {
       const APP_MIN_BALANCE = (210_300).microAlgos();
       const fundingTxn = await localnet.algorand.createTransaction.payment({
@@ -181,6 +196,23 @@ describe("NttRateLimiter", () => {
   });
 
   describe("set outbound rate limit", () => {
+    test.each([
+      { limitLength: 8, arg: "arc4.uint256" },
+      { limitLength: 34, arg: "arc4.uint256" },
+    ])(`fails when limit is $limitLength bytes`, async ({ limitLength, arg }) => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: admin,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [
+            client.appClient.getABIMethod("set_outbound_rate_limit").getSelector(),
+            convertNumberToBytes(0, limitLength),
+          ],
+        }),
+      ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+    });
+
     test("fails when caller is not rate limiter manager", async () => {
       await expect(
         client.send.setOutboundRateLimit({
@@ -216,6 +248,23 @@ describe("NttRateLimiter", () => {
   });
 
   describe("set outbound rate duration", () => {
+    test.each([
+      { durationLength: 4, arg: "arc4.uint64" },
+      { durationLength: 16, arg: "arc4.uint64" },
+    ])(`fails when duration is $durationLength bytes`, async ({ durationLength, arg }) => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: admin,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [
+            client.appClient.getABIMethod("set_outbound_rate_duration").getSelector(),
+            convertNumberToBytes(0, durationLength),
+          ],
+        }),
+      ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+    });
+
     test("fails when caller is not rate limiter manager", async () => {
       await expect(
         client.send.setOutboundRateDuration({
@@ -274,6 +323,29 @@ describe("NttRateLimiter", () => {
       );
     });
 
+    test.each([
+      { chainIdLength: 1, limitLength: 32, arg: "arc4.uint16" },
+      { chainIdLength: 4, limitLength: 32, arg: "arc4.uint16" },
+      { chainIdLength: 2, limitLength: 8, arg: "arc4.uint256" },
+      { chainIdLength: 2, limitLength: 34, arg: "arc4.uint256" },
+    ])(
+      `fails when chain id is $chainIdLength and limit is $limitLength bytes`,
+      async ({ chainIdLength, limitLength, arg }) => {
+        await expect(
+          localnet.algorand.send.appCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("set_inbound_rate_limit").getSelector(),
+              convertNumberToBytes(0, chainIdLength),
+              convertNumberToBytes(0, limitLength),
+            ],
+          }),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
+
     test("fails when caller is not rate limiter manager", async () => {
       await expect(
         client.send.setInboundRateLimit({
@@ -323,6 +395,29 @@ describe("NttRateLimiter", () => {
   });
 
   describe("set inbound rate duration", () => {
+    test.each([
+      { chainIdLength: 1, durationLength: 8, arg: "arc4.uint16" },
+      { chainIdLength: 4, durationLength: 8, arg: "arc4.uint16" },
+      { chainIdLength: 2, durationLength: 4, arg: "arc4.uint64" },
+      { chainIdLength: 2, durationLength: 16, arg: "arc4.uint64" },
+    ])(
+      `fails when chain id is $chainIdLength and duration is $durationLength bytes`,
+      async ({ chainIdLength, durationLength, arg }) => {
+        await expect(
+          localnet.algorand.send.appCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("set_inbound_rate_duration").getSelector(),
+              convertNumberToBytes(0, chainIdLength),
+              convertNumberToBytes(0, durationLength),
+            ],
+          }),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
+
     test("fails when caller is not rate limiter manager", async () => {
       await expect(
         client.send.setInboundRateDuration({

@@ -1,6 +1,6 @@
 import { algorandFixture } from "@algorandfoundation/algokit-utils/testing";
 import type { TransactionSignerAccount } from "@algorandfoundation/algokit-utils/types/account";
-import { type Account, type Address, getApplicationAddress } from "algosdk";
+import { type Account, type Address, OnApplicationComplete, getApplicationAddress } from "algosdk";
 
 import {
   MockTransceiverManagerClient,
@@ -11,7 +11,7 @@ import {
   SimpleMessageHandlerFactory,
 } from "../../specs/client/SimpleMessageHandler.client.ts";
 import { getMessagesExecutedBoxKey } from "../utils/boxes.ts";
-import { getEventBytes, getRandomBytes } from "../utils/bytes.ts";
+import { convertNumberToBytes, getEventBytes, getRandomBytes } from "../utils/bytes.ts";
 import { type TransceiverInstruction, getMessageReceived, getRandomMessageToSend } from "../utils/message.ts";
 import { MAX_UINT16, MAX_UINT64, getRandomUInt } from "../utils/uint.ts";
 
@@ -249,8 +249,81 @@ describe("MessageHandler", () => {
       await transceiverManagerClient.send.setMessageAttestations({ args: [THRESHOLD] });
     });
 
+    test("fails when message length is less than 132 bytes", async () => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: admin,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [client.appClient.getABIMethod("execute_message").getSelector(), getRandomBytes(131)],
+          extraFee: (2000).microAlgos(),
+        }),
+      ).rejects.toThrow(`invalid tuple encoding`);
+    });
+
+    test("fails when message pointer is not to payload", async () => {
+      await expect(
+        localnet.algorand.send.appCall({
+          sender: admin,
+          appId,
+          onComplete: OnApplicationComplete.NoOpOC,
+          args: [
+            client.appClient.getABIMethod("execute_message").getSelector(),
+            Uint8Array.from([...getRandomBytes(130), ...convertNumberToBytes(0, 2)]),
+          ],
+          extraFee: (2000).microAlgos(),
+        }),
+      ).rejects.toThrow(`invalid tail pointer at index 5`);
+    });
+
+    test.each([
+      { messagePayloadLengthDelta: -1, arg: "ntt_contracts.types.MessageReceived" },
+      { messagePayloadLengthDelta: 1, arg: "ntt_contracts.types.MessageReceived" },
+    ])(
+      "fails when message payload length delta is $messagePayloadLengthDelta bytes",
+      async ({ messagePayloadLengthDelta, arg }) => {
+        const payload = getRandomBytes(50);
+        await expect(
+          localnet.algorand.send.appCall({
+            sender: admin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("execute_message").getSelector(),
+              Uint8Array.from([
+                ...getRandomBytes(130),
+                ...convertNumberToBytes(132, 2),
+                ...convertNumberToBytes(payload.length + messagePayloadLengthDelta, 2),
+                ...payload,
+              ]),
+            ],
+            extraFee: (2000).microAlgos(),
+          }),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
+
     test("fails when message handler is not application", async () => {
-      const MESSAGE_RECEIVED = getMessageReceived(getRandomUInt(MAX_UINT16), getRandomMessageToSend());
+      const MESSAGE_RECEIVED = getMessageReceived(
+        getRandomUInt(MAX_UINT16),
+        getRandomMessageToSend({ handlerAddress: getRandomBytes(32) }),
+      );
+      await expect(
+        client.send.executeMessage({
+          sender: user,
+          args: [MESSAGE_RECEIVED],
+          appReferences: [transceiverManagerAppId],
+          boxReferences: [getMessagesExecutedBoxKey(MESSAGE_DIGEST)],
+          extraFee: (2000).microAlgos(),
+        }),
+      ).rejects.toThrow("Unsafe conversion of bytes32 to uint64");
+    });
+
+    test("fails when message handler is different application", async () => {
+      const MESSAGE_RECEIVED = getMessageReceived(
+        getRandomUInt(MAX_UINT16),
+        getRandomMessageToSend({ handlerAddress: convertNumberToBytes(transceiverManagerAppId, 32) }),
+      );
       await expect(
         client.send.executeMessage({
           sender: user,
@@ -276,7 +349,7 @@ describe("MessageHandler", () => {
       // execute message
       const MESSAGE_RECEIVED = getMessageReceived(
         getRandomUInt(MAX_UINT16),
-        getRandomMessageToSend({ handlerAddress: getApplicationAddress(appId).publicKey }),
+        getRandomMessageToSend({ handlerAddress: convertNumberToBytes(appId, 32) }),
       );
       await expect(
         client.send.executeMessage({
@@ -308,7 +381,7 @@ describe("MessageHandler", () => {
       });
       const MESSAGE_RECEIVED = getMessageReceived(
         getRandomUInt(MAX_UINT16),
-        getRandomMessageToSend({ handlerAddress: getApplicationAddress(appId).publicKey }),
+        getRandomMessageToSend({ handlerAddress: convertNumberToBytes(appId, 32) }),
       );
       const res = await client
         .newGroup()
@@ -335,7 +408,7 @@ describe("MessageHandler", () => {
       // execute message
       const MESSAGE_RECEIVED = getMessageReceived(
         getRandomUInt(MAX_UINT16),
-        getRandomMessageToSend({ handlerAddress: getApplicationAddress(appId).publicKey }),
+        getRandomMessageToSend({ handlerAddress: convertNumberToBytes(appId, 32) }),
       );
       await expect(
         client.send.executeMessage({

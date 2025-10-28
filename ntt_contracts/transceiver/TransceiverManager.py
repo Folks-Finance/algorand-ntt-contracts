@@ -1,5 +1,5 @@
 from algopy import BoxMap, Global, Txn, UInt64, gtxn, itxn, op, subroutine, uenumerate
-from algopy.arc4 import Address, Bool, DynamicArray, DynamicBytes, Struct, UInt256, abi_call, abimethod, emit
+from algopy.arc4 import Address, Bool, DynamicArray, DynamicBytes, Struct, abi_call, abimethod, emit
 
 from folks_contracts.library import BytesUtils, UInt64SetLib
 from folks_contracts.library.AccessControl import AccessControl
@@ -172,7 +172,7 @@ class TransceiverManager(ITransceiverManager, AccessControl):
         self._check_message_handler_not_paused(message_handler)
 
         # check message source address matches caller
-        assert message.source_address == UniversalAddress.from_bytes(Txn.sender.bytes), err.MESSAGE_SOURCE_ADDRESS_CALLER
+        assert message.source_address == BytesUtils.convert_uint64_to_bytes32(message_handler), err.MESSAGE_SOURCE_ADDRESS_CALLER
 
         # get total delivery quote and send message through each transceiver
         total_delivery_price = self._quote_and_maybe_send_message(
@@ -234,7 +234,7 @@ class TransceiverManager(ITransceiverManager, AccessControl):
             message.source_chain_id.bytes +
             message.source_address.bytes +
             message.handler_address.bytes +
-            message.payload
+            message.payload.bytes
         ))
 
     @abimethod(readonly=True)

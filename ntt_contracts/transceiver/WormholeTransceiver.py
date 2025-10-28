@@ -1,5 +1,5 @@
 from algopy import Account, BoxMap, Bytes, GlobalState, Global, OnCompleteAction, String, UInt64, itxn, gtxn, op, subroutine
-from algopy.arc4 import Address, Bool, Struct, UInt16, abimethod, emit
+from algopy.arc4 import Address, Bool, DynamicBytes, Struct, UInt16, abimethod, emit
 
 from folks_contracts.library.extensions.InitialisableWithCreator import InitialisableWithCreator
 from .. import constants as const, errors as err
@@ -167,7 +167,11 @@ class WormholeTransceiver(Transceiver, InitialisableWithCreator):
         index += const.BYTES32_LENGTH
         message_user_address = UniversalAddress.from_bytes(op.extract(handler_payload, index, const.BYTES32_LENGTH))
         index += const.BYTES32_LENGTH
-        message_payload = op.substring(handler_payload, index, handler_payload.length)
+        message_payload = DynamicBytes.from_bytes(op.substring(handler_payload, index, handler_payload.length))
+
+        # ensure message payload specifies correct length
+        message_payload_length = op.btoi(op.extract(handler_payload, index, const.UINT16_LENGTH))
+        assert handler_payload.length - index - const.UINT16_LENGTH == message_payload_length, err.LENGTH_INCORRECT
 
         # deliver message to TransceiverManager
         # IMPORTANT: must verify the recipient chain in the concrete MessageHandler
@@ -200,7 +204,7 @@ class WormholeTransceiver(Transceiver, InitialisableWithCreator):
 
         # transceiver_instruction is ignored, when automatic relayer is supported
         # it could be used to signal the relay approach (automatic/manual)
-        handler_payload = message.id.bytes + message.user_address.bytes + message.payload
+        handler_payload = message.id.bytes + message.user_address.bytes + message.payload.bytes
         payload = (
             Bytes.from_hex(WH_TRANSCEIVER_PAYLOAD_PREFIX) +
             message.source_address.bytes +

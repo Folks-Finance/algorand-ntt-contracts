@@ -10,6 +10,9 @@ export function getRandomBytes(length: number): Uint8Array {
 }
 
 export function convertNumberToBytes(num: number | bigint, length: number): Uint8Array {
+  // handle edge case of zero length
+  if (length === 0) return Uint8Array.from([]);
+
   // insert 0s at the beginning if data is smaller than length bytes
   const buf = Buffer.alloc(length, 0);
 

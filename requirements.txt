@@ -1,7 +1,7 @@
 algokit==2.9.1
-algokit-utils==4.2.1
-algorand-python==3.0.0
-algorand-smart-contract-library @ git+https://github.com/Folks-Finance/algorand-smart-contract-library.git@f0a9e8cbae3295129d2bed63a6fcdbf5a2e0047b
-puyapy==5.2.0
+algokit-utils==4.2.2
+algorand-python==3.1.1
+algorand-smart-contract-library @ git+https://github.com/Folks-Finance/algorand-smart-contract-library.git@3a82609cde9c93b85b48b72f5d31937f1c295012
+puyapy==5.3.2
 py-algorand-sdk==2.11.1
 setuptools==80.9.0

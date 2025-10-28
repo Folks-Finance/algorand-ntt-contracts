@@ -1,11 +1,11 @@
 import { algorandFixture } from "@algorandfoundation/algokit-utils/testing";
 import type { TransactionSignerAccount } from "@algorandfoundation/algokit-utils/types/account";
-import { getApplicationAddress } from "algosdk";
+import { OnApplicationComplete, getApplicationAddress } from "algosdk";
 import type { Account, Address } from "algosdk";
 
 import { NttTokenExistingClient, NttTokenExistingFactory } from "../../specs/client/NttTokenExisting.client.ts";
 import { getAddressRolesBoxKey, getRoleBoxKey } from "../utils/boxes.ts";
-import { getEventBytes, getRandomBytes, getRoleBytes } from "../utils/bytes.ts";
+import { convertNumberToBytes, getEventBytes, getRandomBytes, getRoleBytes } from "../utils/bytes.ts";
 import { SECONDS_IN_DAY } from "../utils/time.ts";
 
 describe("NttTokenExisting", () => {
@@ -101,6 +101,29 @@ describe("NttTokenExisting", () => {
         }),
       ).rejects.toThrow("Caller must be the contract creator");
     });
+
+    test.each([
+      { adminLength: 30, assetIdLength: 8, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { adminLength: 34, assetIdLength: 8, arg: "arc4.static_array<arc4.uint8, 32>" },
+      { adminLength: 32, assetIdLength: 4, arg: "arc4.uint64" },
+      { adminLength: 32, assetIdLength: 16, arg: "arc4.uint64" },
+    ])(
+      `fails to initialise when admin is $adminLength and asset id is $assetIdLength bytes`,
+      async ({ adminLength, assetIdLength, arg }) => {
+        await expect(
+          localnet.algorand.send.appCall({
+            sender: defaultAdmin,
+            appId,
+            onComplete: OnApplicationComplete.NoOpOC,
+            args: [
+              client.appClient.getABIMethod("initialise").getSelector(),
+              getRandomBytes(adminLength),
+              convertNumberToBytes(0, assetIdLength),
+            ],
+          }),
+        ).rejects.toThrow(`invalid number of bytes for ${arg}`);
+      },
+    );
 
     test("succeeds to initialise and sets correct state", async () => {
       const APP_MIN_BALANCE = (255_400).microAlgos();

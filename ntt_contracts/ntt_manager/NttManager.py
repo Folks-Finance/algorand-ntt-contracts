@@ -1,5 +1,5 @@
 from algopy import BoxMap, Bytes, Global, GlobalState, Txn, UInt64, gtxn, itxn, op, subroutine
-from algopy.arc4 import Address, Bool, Struct, UInt8, UInt16, UInt256, abi_call, abimethod, emit
+from algopy.arc4 import Address, Bool, DynamicBytes, Struct, UInt8, UInt16, UInt256, abi_call, abimethod, emit
 
 from folks_contracts.library import BytesUtils
 from folks_contracts.library.Upgradeable import Upgradeable
@@ -376,7 +376,7 @@ class NttManager(INttManager, MessageHandler, NttRateLimiter, Upgradeable):
         ntt_manager_peer = self.get_ntt_manager_peer(recipient_chain)
 
         # construct message by concatenating underlying bytes
-        payload = (
+        payload = DynamicBytes(
             Bytes.from_hex(NTT_PAYLOAD_PREFIX) +
             trimmed_amount.decimals.bytes +
             op.itob(trimmed_amount.amount.as_uint64()) +
@@ -387,10 +387,10 @@ class NttManager(INttManager, MessageHandler, NttRateLimiter, Upgradeable):
         message = MessageToSend(
             id=message_id.copy(),
             user_address=UniversalAddress.from_bytes(sender.bytes),
-            source_address=UniversalAddress.from_bytes(Global.current_application_address.bytes),
+            source_address=BytesUtils.convert_uint64_to_bytes32(Global.current_application_id.id),
             destination_chain_id=recipient_chain,
             handler_address=ntt_manager_peer.peer_contract.copy(),
-            payload=payload,
+            payload=payload.copy(),
         )
 
         # call transceiver manager to send message through configured transceivers
@@ -421,8 +421,8 @@ class NttManager(INttManager, MessageHandler, NttRateLimiter, Upgradeable):
         assert message.source_address == ntt_manager_peer.peer_contract, err.PEER_ADDRESS_UNKNOWN
 
         # parse payload
-        payload = message.payload
-        index = UInt64(0)
+        payload = message.payload.bytes
+        index = UInt64(const.UINT16_LENGTH) # skip payload length
         assert Bytes.from_hex(NTT_PAYLOAD_PREFIX) == op.extract(payload, index, const.BYTES4_LENGTH), err.PREFIX_INCORRECT
         index += const.BYTES4_LENGTH
         from_decimals = ARC4UInt8(op.btoi(op.extract(payload, index, const.UINT8_LENGTH)))

@@ -44,7 +44,7 @@ class OutboundTransferRateLimited(Struct):
     amount: ARC4UInt64
 
 class InboundTransferRateLimited(Struct):
-    sender: Address
+    recipient: Address
     message_digest: MessageDigest
     current_capacity: ARC4UInt256
     amount: ARC4UInt64
