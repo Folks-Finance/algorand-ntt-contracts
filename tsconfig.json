@@ -12,6 +12,6 @@
     "allowImportingTsExtensions": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["scripts/**/*", "tests/**/*"],
+  "include": ["deployment/**/*", "tests/**/*"],
   "exclude": ["specs/**/*", "node_modules"]
 }
