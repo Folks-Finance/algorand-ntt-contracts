@@ -2,7 +2,9 @@
 
 ## Overview
 
-This repository contains the PuyaPy implementation for Wormhole NTT on Algorand.
+This repository contains the PuyaPy implementation for Wormhole NTT on Algorand. For the Wormhole NTT implementation on other chains, please refer to https://github.com/wormhole-foundation/native-token-transfers.
+
+Wormhole’s Native Token Transfers (NTT) is an open, flexible, and composable framework for transferring tokens across blockchains without liquidity pools. Integrators have full control over how their Natively Transferred Tokens (NTTs) behave on each chain, including the token standard and metadata.
 
 ## Requirements
 
