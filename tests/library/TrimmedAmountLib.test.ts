@@ -77,7 +77,7 @@ describe("TrimmedAmountLib", () => {
       { amt: 123456n, fromDecimals: 8, toDecimals: 6, expected: { amount: 1234n, decimals: 6 } },
       { amt: 123456n, fromDecimals: 12, toDecimals: 10, expected: { amount: 12n, decimals: 8 } },
       // scale down and rounds to zero
-      { amt: 123456n, fromDecimals: 12, toDecimals: 6n, expected: { amount: 0n, decimals: 6 } },
+      { amt: 123456n, fromDecimals: 12, toDecimals: 6, expected: { amount: 0n, decimals: 6 } },
     ])(
       "$amt from $fromDecimals decimals to $toDecimals decimals is $expected",
       async ({ amt, fromDecimals, toDecimals, expected }) => {

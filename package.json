@@ -8,6 +8,7 @@
     "client": "algokit generate client ./specs/arc56 --output ./specs/client/{contract_name}.client.ts --language typescript",
     "build": "npm run teal && npm run arc56 && npm run client",
     "clean": "rm -rf ./specs",
+    "pretest": "npm run build",
     "test": "jest --runInBand",
     "script": "tsx --env-file=.env"
   },
